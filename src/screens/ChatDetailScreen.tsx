@@ -5,33 +5,70 @@ import { Text, useTheme, Avatar, IconButton, TextInput, Surface } from 'react-na
 import { StatusBar } from 'react-native'
 import { useNavigation } from '@react-navigation/native'
 
-// Mock messages data
+// Mock messages data with status
 const mockMessages = [
   {
     id: '1',
     text: 'Hey, how are you?',
     time: '10:30 AM',
     isMe: false,
+    status: 'read',
   },
   {
     id: '2',
     text: 'I\'m good, thanks! How about you?',
     time: '10:31 AM',
     isMe: true,
+    status: 'read',
   },
   {
     id: '3',
     text: 'Doing well! Just working on some projects.',
     time: '10:32 AM',
     isMe: false,
+    status: 'read',
   },
   {
     id: '4',
     text: 'That sounds interesting! What kind of projects?',
     time: '10:33 AM',
     isMe: true,
+    status: 'delivered',
   },
 ]
+
+const MessageStatus = ({ status }: { status: string }) => {
+  const theme = useTheme()
+  
+  return (
+    <View style={styles.statusContainer}>
+      {status === 'read' && (
+        <IconButton
+          icon="check-all"
+          size={16}
+          iconColor={theme.colors.primary}
+          style={styles.statusIcon}
+        />
+      )}
+      {status === 'delivered' && (
+        <IconButton
+          icon="check-all"
+          size={16}
+          iconColor="#667781"
+          style={styles.statusIcon}
+        />
+      )}
+      {status === 'sent' && (
+        <IconButton
+          icon="check"
+          size={16}
+          iconColor="#667781"
+          style={styles.statusIcon}
+        />
+      )}
+    </View>
+  )
+}
 
 const MessageBubble = ({ message, index }: { message: typeof mockMessages[0], index: number }) => {
   const theme = useTheme()
@@ -63,23 +100,31 @@ const MessageBubble = ({ message, index }: { message: typeof mockMessages[0], in
             style={styles.avatar}
           />
         )}
-        <Surface style={[
-          styles.messageBubble,
-          message.isMe ? styles.myMessageBubble : styles.theirMessageBubble
-        ]}>
-          <Text style={[
-            styles.messageText,
-            message.isMe ? styles.myMessageText : styles.theirMessageText
+        <View style={styles.messageContent}>
+          <Surface style={[
+            styles.messageBubble,
+            message.isMe ? styles.myMessageBubble : styles.theirMessageBubble
           ]}>
-            {message.text}
-          </Text>
-          <Text style={[
-            styles.messageTime,
-            message.isMe ? styles.myMessageTime : styles.theirMessageTime
+            <Text style={[
+              styles.messageText,
+              message.isMe ? styles.myMessageText : styles.theirMessageText
+            ]}>
+              {message.text}
+            </Text>
+          </Surface>
+          <View style={[
+            styles.messageMeta,
+            message.isMe ? styles.myMessageMeta : styles.theirMessageMeta
           ]}>
-            {message.time}
-          </Text>
-        </Surface>
+            <Text style={[
+              styles.messageTime,
+              message.isMe ? styles.myMessageTime : styles.theirMessageTime
+            ]}>
+              {message.time}
+            </Text>
+            {message.isMe && <MessageStatus status={message.status} />}
+          </View>
+        </View>
       </View>
     </Animated.View>
   )
@@ -90,6 +135,7 @@ export default function ChatDetailScreen() {
   const navigation = useNavigation()
   const theme = useTheme()
   const [isInputFocused, setIsInputFocused] = useState(false)
+  const [isTyping, setIsTyping] = useState(false)
   
   return (
     <>
@@ -113,7 +159,9 @@ export default function ChatDetailScreen() {
               />
               <View style={styles.headerText}>
                 <Text style={styles.headerTitle}>John Doe</Text>
-                <Text style={styles.headerSubtitle}>Online</Text>
+                <Text style={styles.headerSubtitle}>
+                  {isTyping ? 'typing...' : 'Online'}
+                </Text>
               </View>
             </View>
             <View style={styles.headerActions}>
@@ -161,9 +209,15 @@ export default function ChatDetailScreen() {
                 placeholder="Message"
                 placeholderTextColor="#667781"
                 value={message}
-                onChangeText={setMessage}
+                onChangeText={(text) => {
+                  setMessage(text)
+                  setIsTyping(text.length > 0)
+                }}
                 onFocus={() => setIsInputFocused(true)}
-                onBlur={() => setIsInputFocused(false)}
+                onBlur={() => {
+                  setIsInputFocused(false)
+                  setIsTyping(false)
+                }}
                 multiline
                 maxLength={1000}
               />
@@ -175,6 +229,7 @@ export default function ChatDetailScreen() {
                   onPress={() => {
                     // Handle send message
                     setMessage('')
+                    setIsTyping(false)
                   }}
                   style={styles.sendButton}
                 />
@@ -263,6 +318,9 @@ const styles = StyleSheet.create({
     marginRight: 8,
     alignSelf: 'flex-end',
   },
+  messageContent: {
+    flex: 1,
+  },
   messageBubble: {
     padding: 12,
     borderRadius: 16,
@@ -283,6 +341,7 @@ const styles = StyleSheet.create({
   },
   messageText: {
     fontSize: 16,
+    lineHeight: 20,
   },
   myMessageText: {
     color: '#000',
@@ -290,43 +349,69 @@ const styles = StyleSheet.create({
   theirMessageText: {
     color: '#000',
   },
+  messageMeta: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 4,
+  },
+  myMessageMeta: {
+    justifyContent: 'flex-end',
+  },
+  theirMessageMeta: {
+    justifyContent: 'flex-start',
+  },
   messageTime: {
     fontSize: 10,
-    marginTop: 4,
-    alignSelf: 'flex-end',
+    color: '#667781',
   },
   myMessageTime: {
-    color: '#128C7E',
+    marginRight: 4,
   },
   theirMessageTime: {
-    color: '#667781',
+    marginLeft: 4,
+  },
+  statusContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  statusIcon: {
+    margin: 0,
+    padding: 0,
   },
   inputContainer: {
     backgroundColor: '#F0F2F5',
-    padding: 8,
+    padding: 4,
+    borderTopWidth: 1,
+    borderTopColor: '#E0E0E0',
   },
   inputWrapper: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#fff',
-    borderRadius: 24,
-    paddingHorizontal: 8,
-    minHeight: 40,
+    borderRadius: 20,
+    paddingHorizontal: 4,
+    minHeight: 36,
+    maxHeight: 100,
   },
   input: {
     flex: 1,
-    marginHorizontal: 8,
-    fontSize: 16,
+    marginHorizontal: 4,
+    fontSize: 15,
     maxHeight: 100,
-    paddingVertical: 8,
+    paddingVertical: 6,
+    paddingHorizontal: 8,
     color: '#111B21',
+    backgroundColor: 'transparent',
   },
   inputIcon: {
     margin: 0,
+    padding: 0,
   },
   sendButton: {
     backgroundColor: '#128C7E',
     margin: 0,
-    marginLeft: 4,
+    marginLeft: 2,
+    width: 32,
+    height: 32,
   },
 })
