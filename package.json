@@ -7,17 +7,25 @@
     "ios": "react-native run-ios",
     "lint": "eslint .",
     "start": "react-native start",
-    "test": "jest"
+    "test": "jest",
+    "release": "./gradlew assembleRelease  apk",
+    "bundle": "./gradlew bundleRelease",
+    "goolrplay_build": "npx react-native build-android --mode=release",
+    "clean": "yarn cache clean && yarn start"
   },
   "dependencies": {
+    "@react-native-community/netinfo": "^11.4.1",
     "@react-navigation/native": "^7.1.6",
     "@react-navigation/native-stack": "^7.3.10",
     "react": "19.0.0",
     "react-native": "0.79.1",
+    "react-native-ble-plx": "^3.5.0",
     "react-native-paper": "^5.13.5",
+    "react-native-permissions": "^5.3.0",
     "react-native-safe-area-context": "^5.4.0",
     "react-native-screens": "^4.10.0",
-    "react-native-vector-icons": "^10.2.0"
+    "react-native-vector-icons": "^10.2.0",
+    "react-native-wifi-reborn": "^4.13.5"
   },
   "devDependencies": {
     "@babel/core": "^7.25.2",
