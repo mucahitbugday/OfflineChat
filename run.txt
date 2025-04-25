@@ -1,0 +1,17 @@
+mkdir src; mkdir src\components; mkdir src\screens; mkdir src\navigation; mkdir src\services; mkdir src\utils; mkdir src\assets; mkdir src\constants; mkdir src\hooks; mkdir src\types; mkdir src\store
+
+
+
+npm install react-native-paper
+npm install react-native-safe-area-context
+npm install react-native-vector-icons
+
+
+project.ext.vectoricons = [iconFontNames: [ 'MaterialCommunityIcons.ttf' ]]
+apply from: file("../../node_modules/react-native-vector-icons/fonts.gradle")
+
+npm install @react-navigation/native
+npm install react-native-screens react-native-safe-area-context
+npm install @react-navigation/native-stack
+
+
