@@ -13,7 +13,7 @@ export default function App() {
 
   return (
     <NavigationContainer>
-    <Stack.Navigator initialRouteName="Onboarding">
+    <Stack.Navigator initialRouteName="OnboardingScreen">
       <Stack.Screen name="OnboardingScreen" component={OnboardingScreen} options={{ headerShown: false }} />
       <Stack.Screen name="ChatListScreen" component={ChatListScreen} options={{ headerShown: false }} />
       <Stack.Screen name="ChatDetailScreen" component={ChatDetailScreen} options={{ headerShown: false }} />
