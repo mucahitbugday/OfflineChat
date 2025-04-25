@@ -1,6 +1,6 @@
 import { StyleSheet, View, FlatList, TouchableOpacity } from 'react-native'
 import React from 'react'
-import { Text, useTheme, Avatar, Surface } from 'react-native-paper'
+import { Text, useTheme, Avatar, Surface, IconButton } from 'react-native-paper'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { StatusBar } from 'react-native'
 import { useNavigation } from '@react-navigation/native'
@@ -8,6 +8,7 @@ import { NativeStackNavigationProp } from '@react-navigation/native-stack'
 
 type RootStackParamList = {
   ChatDetailScreen: { chatId: string }
+  DiscoverScreen: undefined
 }
 
 type NavigationProp = NativeStackNavigationProp<RootStackParamList>
@@ -92,6 +93,7 @@ const ChatItem = ({ chat }: { chat: typeof mockChats[0] }) => {
 
 export default function ChatListScreen() {
   const theme = useTheme()
+  const navigation = useNavigation<NavigationProp>()
 
   return (
     <>
@@ -102,6 +104,12 @@ export default function ChatListScreen() {
       <SafeAreaView style={[styles.container, { backgroundColor: '#F0F2F5' }]}>
         <View style={[styles.header, { backgroundColor: theme.colors.primary }]}>
           <Text style={styles.headerTitle}>Chats</Text>
+          <IconButton
+            icon="account-search"
+            iconColor="#fff"
+            size={24}
+            onPress={() => navigation.navigate('DiscoverScreen')}
+          />
         </View>
         
         <FlatList
@@ -127,6 +135,9 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.1,
     shadowRadius: 4,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
   },
   headerTitle: {
     color: '#fff',
