@@ -11,7 +11,7 @@
     "release": "./gradlew assembleRelease  apk",
     "bundle": "./gradlew bundleRelease",
     "goolrplay_build": "npx react-native build-android --mode=release",
-    "clean": "yarn cache clean && yarn start"
+    "clean": "yarn cache clean && npm run android --reset-cache && cd android && ./gradlew clean && cd .."
   },
   "dependencies": {
     "@react-native-async-storage/async-storage": "^2.1.2",
@@ -21,6 +21,7 @@
     "react": "19.0.0",
     "react-native": "0.79.1",
     "react-native-ble-plx": "^3.5.0",
+    "react-native-device-info": "^14.0.4",
     "react-native-paper": "^5.13.5",
     "react-native-permissions": "^5.3.0",
     "react-native-safe-area-context": "^5.4.0",

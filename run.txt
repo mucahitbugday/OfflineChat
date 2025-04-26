@@ -18,6 +18,6 @@ npm install @react-navigation/native-stack
 yarn add react-native-ble-plx
 yarn add react-native-permissions
 yarn add @react-native-community/netinfo
-
+npm i react-native-device-info
 
 

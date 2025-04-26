@@ -3,16 +3,6 @@ import React from 'react'
 import { Text, useTheme, Avatar, Surface, IconButton } from 'react-native-paper'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { StatusBar } from 'react-native'
-import { useNavigation } from '@react-navigation/native'
-import { NativeStackNavigationProp } from '@react-navigation/native-stack'
-
-type RootStackParamList = {
-  ChatDetailScreen: { chatId: string }
-  DiscoverScreen: undefined
-}
-
-type NavigationProp = NativeStackNavigationProp<RootStackParamList>
-
 // Mock data for chat list
 const mockChats = [
   {
@@ -22,61 +12,23 @@ const mockChats = [
     time: '10:30 AM',
     unreadCount: 2,
     avatar: 'https://randomuser.me/api/portraits/men/1.jpg',
-  },
-  {
-    id: '2',
-    name: 'Jane Smith',
-    lastMessage: 'Can we meet tomorrow?',
-    time: 'Yesterday',
-    unreadCount: 0,
-    avatar: 'https://randomuser.me/api/portraits/women/1.jpg',
-  },
-  {
-    id: '3',
-    name: 'Mike Johnson',
-    lastMessage: 'The project is going well!',
-    time: 'Yesterday',
-    unreadCount: 5,
-    avatar: 'https://randomuser.me/api/portraits/men/2.jpg',
-  },
-  {
-    id: '4',
-    name: 'Sarah Wilson',
-    lastMessage: 'Thanks for your help!',
-    time: '2 days ago',
-    unreadCount: 0,
-    avatar: 'https://randomuser.me/api/portraits/women/2.jpg',
-  },
+  }
 ]
 
-const ChatItem = ({ chat }: { chat: typeof mockChats[0] }) => {
-  const navigation = useNavigation<NavigationProp>()
+const ChatItem = ({ chat, navigation }: { chat: typeof mockChats[0], navigation: any }) => {
   const theme = useTheme()
 
   return (
-    <TouchableOpacity
-      onPress={() => navigation.navigate('ChatDetailScreen', { chatId: chat.id })}
-      activeOpacity={0.7}
-    >
+    <TouchableOpacity onPress={() => navigation.navigate('ChatDetailScreen', { chatId: chat.id })} activeOpacity={0.7}>
       <Surface style={styles.chatItem}>
-        <Avatar.Image 
-          size={50} 
-          source={{ uri: chat.avatar }} 
-          style={styles.avatar}
-        />
+        <Avatar.Image size={50} source={{ uri: chat.avatar }} style={styles.avatar} />
         <View style={styles.chatContent}>
           <View style={styles.chatHeader}>
             <Text style={styles.chatName}>{chat.name}</Text>
             <Text style={styles.chatTime}>{chat.time}</Text>
           </View>
           <View style={styles.chatFooter}>
-            <Text 
-              style={[
-                styles.lastMessage,
-                chat.unreadCount > 0 && styles.unreadMessage
-              ]}
-              numberOfLines={1}
-            >
+            <Text style={[styles.lastMessage, chat.unreadCount > 0 && styles.unreadMessage]} numberOfLines={1} >
               {chat.lastMessage}
             </Text>
             {chat.unreadCount > 0 && (
@@ -91,30 +43,24 @@ const ChatItem = ({ chat }: { chat: typeof mockChats[0] }) => {
   )
 }
 
-export default function ChatListScreen() {
+export default function ChatListScreen({ navigation }: { navigation: any }) {
   const theme = useTheme()
-  const navigation = useNavigation<NavigationProp>()
 
   return (
     <>
-      <StatusBar
-        backgroundColor={theme.colors.primary}
-        barStyle="light-content"
-      />
+      <StatusBar backgroundColor={theme.colors.primary} barStyle="light-content" />
       <SafeAreaView style={[styles.container, { backgroundColor: '#F0F2F5' }]}>
         <View style={[styles.header, { backgroundColor: theme.colors.primary }]}>
           <Text style={styles.headerTitle}>Chats</Text>
-          <IconButton
-            icon="account-search"
-            iconColor="#fff"
-            size={24}
-            onPress={() => navigation.navigate('DiscoverScreen')}
-          />
+          <View style={{ flexDirection: 'row' }}>
+            <IconButton icon="delete-outline" iconColor="#fff" size={24} onPress={() => navigation.navigate('DiscoverScreen')} />
+            <IconButton icon="account-search" iconColor="#fff" size={24} onPress={() => navigation.navigate('ScanningScreen')} />
+          </View>
         </View>
-        
+
         <FlatList
           data={mockChats}
-          renderItem={({ item }) => <ChatItem chat={item} />}
+          renderItem={({ item }) => <ChatItem chat={item} navigation={navigation} />}
           keyExtractor={item => item.id}
           contentContainerStyle={styles.list}
           showsVerticalScrollIndicator={false}

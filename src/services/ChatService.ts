@@ -61,7 +61,7 @@ class ChatService {
     try {
       // Get all chats
       const chats = await this.getChats();
-      
+
       // Check each device's status
       for (const chat of chats) {
         try {
@@ -102,7 +102,7 @@ class ChatService {
             const device = await this.bleManager.connectToDevice(chat.id, {
               timeout: CONNECTION_TIMEOUT
             });
-            
+
             // If we can connect, device is online
             await this.updateDeviceStatus(chat.id, true);
             await device.cancelConnection();
@@ -132,7 +132,7 @@ class ChatService {
       chat.messages.push(message);
       chat.lastMessage = message;
       chat.updatedAt = new Date().toISOString();
-      
+
       await this.saveChat(chat);
     } catch (error) {
       console.error('Error adding message:', error);
@@ -168,7 +168,7 @@ class ChatService {
 
       chat.unreadCount = 0;
       chat.updatedAt = new Date().toISOString();
-      
+
       await this.saveChat(chat);
     } catch (error) {
       console.error('Error marking chat as read:', error);
@@ -214,13 +214,13 @@ class ChatService {
     try {
       const chats = await this.getChats();
       const index = chats.findIndex(c => c.id === chat.id);
-      
+
       if (index >= 0) {
         chats[index] = chat;
       } else {
         chats.push(chat);
       }
-      
+
       await AsyncStorage.setItem(CHATS_STORAGE_KEY, JSON.stringify(chats));
     } catch (error) {
       console.error('Error saving chat:', error);
@@ -318,7 +318,7 @@ class ChatService {
   }
 
   private generateGuid(): string {
-    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
       const r = Math.random() * 16 | 0;
       const v = c === 'x' ? r : (r & 0x3 | 0x8);
       return v.toString(16);

@@ -1,5 +1,10 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
+
+
+export const DEVICE_NAME_KEY = '@DEVICE_NAME_KEY';
+
+
 export const StorageService = {
   async getItem<T>(key: string): Promise<T | null> {
     const value = await AsyncStorage.getItem(key);

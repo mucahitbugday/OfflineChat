@@ -34,8 +34,8 @@ interface AddressInfo {
     family: string;
 }
 
-interface TcpSocketServer extends TcpSocket.Server {}
-interface TcpSocketClient extends TcpSocket.Socket {}
+interface TcpSocketServer extends TcpSocket.Server { }
+interface TcpSocketClient extends TcpSocket.Socket { }
 
 // NetworkInfo için tip tanımlaması ekle
 interface NetworkDetails {
@@ -70,7 +70,7 @@ export default function DiscoverScreen() {
         isMounted.current = true;
         loadDeviceName();
         // İlk açılışta otomatik taramayı kaldır
-        // checkPermissionsAndScan();
+        checkPermissionsAndScan();
         startServer();
 
         return () => {
@@ -79,32 +79,6 @@ export default function DiscoverScreen() {
             stopServer();
         };
     }, [connectionType]);
-
-    const loadDeviceName = async () => {
-        try {
-            const savedName = await AsyncStorage.getItem(DEVICE_NAME_KEY)
-            if (savedName) {
-                setDeviceName(savedName)
-            } else {
-                // Varsayılan cihaz ismi
-                const defaultName = `Cihaz-${Math.floor(Math.random() * 1000)}`
-                setDeviceName(defaultName)
-                await AsyncStorage.setItem(DEVICE_NAME_KEY, defaultName)
-            }
-        } catch (error) {
-            console.error('Cihaz ismi yükleme hatası:', error)
-        }
-    }
-
-    const saveDeviceName = async (name: string) => {
-        try {
-            await AsyncStorage.setItem(DEVICE_NAME_KEY, name)
-            setDeviceName(name)
-            setIsEditingName(false)
-        } catch (error) {
-            console.error('Cihaz ismi kaydetme hatası:', error)
-        }
-    }
 
     const cleanup = () => {
         try {
@@ -169,7 +143,7 @@ export default function DiscoverScreen() {
 
             const isBluetoothReady = await checkBluetoothState()
             if (isBluetoothReady) {
-                startScan()
+                // startScan()
             }
         } catch (error) {
             console.error('İzin hatası:', error)
@@ -189,6 +163,52 @@ export default function DiscoverScreen() {
             )
         }
     }
+
+
+    const addLog = (message: string) => {
+        console.log(message); // Konsola da yazdır
+        setLogs(prevLogs => {
+            const newLogs = [...prevLogs, `${new Date().toLocaleTimeString()}: ${message}`];
+            return newLogs.slice(-50); // Son 50 logu tut
+        });
+    };
+
+    const clearLogs = () => {
+        setLogs([]);
+    };
+
+    //#region UTİLS
+    const loadDeviceName = async () => {
+
+        try {
+            const savedName = await AsyncStorage.getItem(DEVICE_NAME_KEY)
+            if (savedName) {
+                setDeviceName(savedName)
+            } else {
+                const defaultName = `Cihaz-${Math.floor(Math.random() * 1000)}`
+                setDeviceName(defaultName)
+                await AsyncStorage.setItem(DEVICE_NAME_KEY, defaultName)
+            }
+        } catch (error) {
+            console.error('Cihaz ismi yükleme hatası:', error)
+        }
+    }
+
+    const saveDeviceName = async (name: string) => {
+        try {
+            await AsyncStorage.setItem(DEVICE_NAME_KEY, name)
+            setDeviceName(name)
+            setIsEditingName(false)
+        } catch (error) {
+            console.error('Cihaz ismi kaydetme hatası:', error)
+        }
+    }
+
+
+    //#endregion UTİLS
+
+
+
 
     const startScan = async () => {
         if (!isMounted.current) return
@@ -321,33 +341,7 @@ export default function DiscoverScreen() {
         }
     }
 
-    const checkWifiPermissions = async () => {
-        if (Platform.OS === 'android') {
-            try {
-                const locationPermission = await check(PERMISSIONS.ANDROID.ACCESS_FINE_LOCATION)
-                if (locationPermission !== RESULTS.GRANTED) {
-                    await request(PERMISSIONS.ANDROID.ACCESS_FINE_LOCATION)
-                }
-                return true
-            } catch (error) {
-                console.error('WiFi izin hatası:', error)
-                return false
-            }
-        }
-        return true
-    }
 
-    const addLog = (message: string) => {
-        console.log(message); // Konsola da yazdır
-        setLogs(prevLogs => {
-            const newLogs = [...prevLogs, `${new Date().toLocaleTimeString()}: ${message}`];
-            return newLogs.slice(-50); // Son 50 logu tut
-        });
-    };
-
-    const clearLogs = () => {
-        setLogs([]);
-    };
 
     const checkPortStatus = async () => {
         try {
@@ -412,7 +406,7 @@ export default function DiscoverScreen() {
 
             // Ağ bilgilerini al
             const networkInfo = await NetInfo.fetch() as NetworkState;
-            
+
             // WiFi SSID kontrolü
             let currentSSID;
             try {
@@ -438,7 +432,7 @@ export default function DiscoverScreen() {
             const subnet = ipAddress.substring(0, ipAddress.lastIndexOf('.'));
             addLog(`Yerel IP: ${ipAddress}`);
             addLog(`Alt ağ: ${subnet}`);
-            
+
             // Tarama başlamadan önce kısa bir bekleme
             await new Promise(resolve => setTimeout(resolve, 2000));
 
@@ -452,7 +446,7 @@ export default function DiscoverScreen() {
             addLog('IP taraması başlıyor...');
 
             // Paralel tarama için IP'leri gruplara böl
-            const batchSize = 5; // Aynı anda daha az IP tara
+            const batchSize = 10; // Aynı anda daha az IP tara
             for (let i = startIp; i <= endIp; i += batchSize) {
                 const endIndex = Math.min(i + batchSize - 1, endIp);
                 const promises = [];
@@ -627,10 +621,10 @@ export default function DiscoverScreen() {
     const startServer = async () => {
         try {
             addLog('Sunucu başlatılıyor...');
-            
+
             // Önce mevcut sunucuyu durdur ve port'un serbest kalmasını bekle
             await stopServer();
-            
+
             // Port'un serbest kalması için kısa bir bekleme
             await new Promise(resolve => setTimeout(resolve, 1000));
 
@@ -641,16 +635,16 @@ export default function DiscoverScreen() {
                 host: '0.0.0.0',
                 port: PORT
             };
-            
+
             // Basitleştirilmiş sunucu oluşturma
             const tcpServer = TcpSocket.createServer((socket: TcpSocketClient) => {
                 addLog('Yeni bağlantı alındı');
-                
+
                 socket.on('data', (data: Buffer | string) => {
                     try {
                         const message = typeof data === 'string' ? data : data.toString();
                         addLog('Veri alındı: ' + message);
-                        
+
                         // Ping isteği kontrolü
                         if (message.includes('GET /ping')) {
                             const response = JSON.stringify({
@@ -659,7 +653,7 @@ export default function DiscoverScreen() {
                                 timestamp: new Date().toISOString()
                             });
 
-                            const httpResponse = 
+                            const httpResponse =
                                 'HTTP/1.1 200 OK\r\n' +
                                 'Content-Type: application/json\r\n' +
                                 'Access-Control-Allow-Origin: *\r\n' +
@@ -713,7 +707,7 @@ export default function DiscoverScreen() {
             // Sunucuyu başlat
             tcpServer.listen(options);
             addLog('Sunucu dinlemeye başladı');
-            
+
             setServer(tcpServer);
             addLog('Sunucu state\'e kaydedildi');
 
@@ -824,7 +818,7 @@ export default function DiscoverScreen() {
                                 mode="contained"
                                 onPress={() => connectionType === 'bluetooth' ? sendMessage(item.id) : sendWifiMessage(item.ip)}
                             >
-                                Mesaj Gönder
+                                Mesaj Gönder ({connectionType === 'bluetooth' ? 'BT' : 'WiFi'})
                             </Button>
                         </Surface>
                     )}
@@ -832,7 +826,6 @@ export default function DiscoverScreen() {
                 />
             )}
 
-            {/* Log Panel */}
             <View style={styles.logContainer}>
                 <View style={styles.logHeader}>
                     <Text style={styles.logTitle}>Tarama Logları</Text>
