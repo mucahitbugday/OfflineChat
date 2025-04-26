@@ -1,0 +1,22 @@
+@echo off
+echo ADB server kapatılıyor...
+adb kill-server
+
+echo ADB server başlatılıyor...
+adb start-server
+
+echo Cihazlar listeleniyor...
+adb devices
+
+echo Her cihaz TCP moduna alınıyor...
+adb -s P2128L001854 tcpip 5555
+adb -s PT99651AA1111804116 tcpip 5555
+
+echo IP adreslerine Wi-Fi üzerinden baglaniliyor...
+adb connect 192.168.1.105
+adb connect 192.168.1.100
+
+echo Baglanti tamamlandi!
+adb devices
+
+pause
