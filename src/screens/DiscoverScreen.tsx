@@ -1,386 +1,332 @@
-import { StyleSheet, View, FlatList, TouchableOpacity, Alert, TextInput } from 'react-native'
-import React, { useState, useEffect } from 'react'
+import { StyleSheet, View, FlatList, TouchableOpacity, Alert, TextInput, Platform } from 'react-native'
+import React, { useState, useEffect, useRef } from 'react'
 import { Text, useTheme, Avatar, Surface, Button, IconButton, SegmentedButtons } from 'react-native-paper'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { StatusBar } from 'react-native'
 import { useNavigation } from '@react-navigation/native'
 import { NativeStackNavigationProp } from '@react-navigation/native-stack'
-import { BleManager } from 'react-native-ble-plx'
-import { PERMISSIONS, request, RESULTS } from 'react-native-permissions'
+import { BleManager, State } from 'react-native-ble-plx'
+import { PERMISSIONS, request, RESULTS, check } from 'react-native-permissions'
 import NetInfo from '@react-native-community/netinfo'
 import WifiManager from 'react-native-wifi-reborn'
 
-type RootStackParamList = {
-    ChatDetailScreen: { chatId: string }
-}
+// Define service and characteristic UUIDs
+const SERVICE_UUID = '4fafc201-1fb5-459e-8fcc-c5c9c331914b'
+const CHARACTERISTIC_UUID = 'beb5483e-36e1-4688-b7f5-ea07361b26a8'
 
-type NavigationProp = NativeStackNavigationProp<RootStackParamList>
+// Singleton BleManager instance
+let bleManagerInstance: BleManager | null = null;
 
-type DiscoveredUserProps = {
-    id: string
-    name: string
-    distance: string
-    connectionType: string
-    avatar: string
-}
-
-// Mock data for discovered users
-const mockDiscoveredUsers = [
-    {
-        id: '1',
-        name: 'John Doe',
-        distance: 'Nearby',
-        connectionType: 'WiFi',
-        avatar: 'https://randomuser.me/api/portraits/men/1.jpg',
-    },
-    {
-        id: '2',
-        name: 'Jane Smith',
-        distance: '2m away',
-        connectionType: 'Bluetooth',
-        avatar: 'https://randomuser.me/api/portraits/women/1.jpg',
-    },
-    {
-        id: '3',
-        name: 'Mike Johnson',
-        distance: '5m away',
-        connectionType: 'Bluetooth',
-        avatar: 'https://randomuser.me/api/portraits/men/2.jpg',
-    },
-]
-
-const DiscoveredUser = ({ user, onSendMessage }: { user: typeof mockDiscoveredUsers[0], onSendMessage: () => void }) => {
-    const navigation = useNavigation<NavigationProp>()
-    const theme = useTheme()
-
-    return (
-        <TouchableOpacity
-            onPress={() => navigation.navigate('ChatDetailScreen', { chatId: user.id })}
-            activeOpacity={0.7}
-        >
-            <Surface style={styles.userItem}>
-                <Avatar.Image
-                    size={50}
-                    source={{ uri: user.avatar }}
-                    style={styles.avatar}
-                />
-                <View style={styles.userContent}>
-                    <View style={styles.userHeader}>
-                        <Text style={styles.userName}>{user.name}</Text>
-                        <View style={styles.connectionType}>
-                            <IconButton
-                                icon={user.connectionType === 'WiFi' ? 'wifi' : 'bluetooth'}
-                                size={16}
-                                iconColor={theme.colors.primary}
-                                style={styles.connectionIcon}
-                            />
-                            <Text style={styles.connectionText}>{user.connectionType}</Text>
-                        </View>
-                    </View>
-                    <Text style={styles.distance}>{user.distance}</Text>
-                </View>
-                <Button
-                    mode="contained"
-                    onPress={onSendMessage}
-                    style={styles.chatButton}
-                    labelStyle={styles.chatButtonLabel}
-                >
-                    Chat
-                </Button>
-            </Surface>
-        </TouchableOpacity>
-    )
-}
+const getBleManager = () => {
+    if (!bleManagerInstance) {
+        bleManagerInstance = new BleManager();
+    }
+    return bleManagerInstance;
+};
 
 export default function DiscoverScreen() {
     const theme = useTheme()
-    const [isScanning, setIsScanning] = useState(false)
-    const [discoveredUsers, setDiscoveredUsers] = useState<DiscoveredUserProps[]>([])
-    const [connectionType, setConnectionType] = useState('both') // 'wifi', 'bluetooth', or 'both'
+    const [devices, setDevices] = useState<any[]>([])
     const [message, setMessage] = useState('')
-    const bleManager = new BleManager()
+    const [isScanning, setIsScanning] = useState(false)
+    const bleManager = useRef(getBleManager()).current
+    const scanTimeout = useRef<NodeJS.Timeout | null>(null)
+    const isMounted = useRef(true)
 
     useEffect(() => {
-        checkPermissions()
+        isMounted.current = true
+        checkPermissionsAndScan()
+
         return () => {
-            bleManager.destroy()
+            isMounted.current = false
+            cleanup()
         }
     }, [])
 
-    const checkPermissions = async () => {
+    const cleanup = () => {
         try {
-            const bluetoothPermission = await request(PERMISSIONS.ANDROID.BLUETOOTH_SCAN)
-            const locationPermission = await request(PERMISSIONS.ANDROID.ACCESS_FINE_LOCATION)
-            const bluetoothConnectPermission = await request(PERMISSIONS.ANDROID.BLUETOOTH_CONNECT)
-            const wifiPermission = await request(PERMISSIONS.ANDROID.ACCESS_COARSE_LOCATION)
+            if (scanTimeout.current) {
+                clearTimeout(scanTimeout.current)
+                scanTimeout.current = null
+            }
 
-            if (
-                bluetoothPermission === RESULTS.GRANTED &&
-                locationPermission === RESULTS.GRANTED &&
-                bluetoothConnectPermission === RESULTS.GRANTED &&
-                wifiPermission === RESULTS.GRANTED
-            ) {
-                await startScanning()
-            } else {
-                Alert.alert(
-                    'Permissions Required',
-                    'Please grant Bluetooth, WiFi, and Location permissions to discover nearby users.',
-                    [{ text: 'OK' }]
-                )
+            if (isScanning) {
+                bleManager.stopDeviceScan()
+                setIsScanning(false)
             }
         } catch (error) {
-            console.error('Permission error:', error)
+            console.error('Temizleme hatası:', error)
         }
     }
 
-    const startScanning = async () => {
-        setIsScanning(true)
-        setDiscoveredUsers([])
+    const checkBluetoothState = async () => {
+        try {
+            const state = await bleManager.state()
+            if (state !== State.PoweredOn) {
+                Alert.alert(
+                    'Bluetooth Kapalı',
+                    'Lütfen Bluetooth\'u açın ve tekrar deneyin.',
+                    [
+                        {
+                            text: 'Tamam',
+                            onPress: () => {
+                                if (isMounted.current) {
+                                    setIsScanning(false)
+                                }
+                            }
+                        }
+                    ]
+                )
+                return false
+            }
+            return true
+        } catch (error) {
+            console.error('Bluetooth durum kontrolü hatası:', error)
+            return false
+        }
+    }
+
+    const checkPermissionsAndScan = async () => {
+        try {
+            if (Platform.OS === 'android') {
+                const bluetoothScanPermission = await check(PERMISSIONS.ANDROID.BLUETOOTH_SCAN)
+                const bluetoothConnectPermission = await check(PERMISSIONS.ANDROID.BLUETOOTH_CONNECT)
+                const locationPermission = await check(PERMISSIONS.ANDROID.ACCESS_FINE_LOCATION)
+
+                if (bluetoothScanPermission !== RESULTS.GRANTED) {
+                    await request(PERMISSIONS.ANDROID.BLUETOOTH_SCAN)
+                }
+                if (bluetoothConnectPermission !== RESULTS.GRANTED) {
+                    await request(PERMISSIONS.ANDROID.BLUETOOTH_CONNECT)
+                }
+                if (locationPermission !== RESULTS.GRANTED) {
+                    await request(PERMISSIONS.ANDROID.ACCESS_FINE_LOCATION)
+                }
+            }
+
+            const isBluetoothReady = await checkBluetoothState()
+            if (isBluetoothReady) {
+                startScan()
+            }
+        } catch (error) {
+            console.error('İzin hatası:', error)
+            Alert.alert(
+                'İzin Hatası',
+                'Bluetooth ve konum izinleri alınamadı. Lütfen ayarlardan izinleri kontrol edin.',
+                [
+                    {
+                        text: 'Tamam',
+                        onPress: () => {
+                            if (isMounted.current) {
+                                setIsScanning(false)
+                            }
+                        }
+                    }
+                ]
+            )
+        }
+    }
+
+    const startScan = async () => {
+        if (!isMounted.current) return
 
         try {
-            if (connectionType === 'bluetooth' || connectionType === 'both') {
-                // Start Bluetooth scanning
-                bleManager.startDeviceScan(null, null, (error, device) => {
+            const isBluetoothReady = await checkBluetoothState()
+            if (!isBluetoothReady) return
+
+            setDevices([])
+            setIsScanning(true)
+
+            bleManager.startDeviceScan(
+                null,
+                {
+                    allowDuplicates: false,
+                    scanMode: 2, // SCAN_MODE_BALANCED
+                    callbackType: 1 // CALLBACK_TYPE_ALL_MATCHES
+                },
+                (error, device) => {
+                    if (!isMounted.current) return
+
                     if (error) {
-                        console.error('Scan error:', error)
+                        console.error('Tarama hatası:', error)
+                        Alert.alert(
+                            'Tarama Hatası',
+                            'Cihazlar taranırken bir hata oluştu. Lütfen tekrar deneyin.',
+                            [
+                                {
+                                    text: 'Tamam',
+                                    onPress: () => {
+                                        if (isMounted.current) {
+                                            setIsScanning(false)
+                                        }
+                                    }
+                                }
+                            ]
+                        )
                         return
                     }
 
                     if (device && device.name) {
-                        const exists = discoveredUsers.find(d => d.id === device.id)
-                        if (exists) return
-
-                        setDiscoveredUsers(prev => [
-                            ...prev,
-                            {
-                                id: device.id,
-                                name: device.name || 'Unknown Device',
-                                distance: 'Unknown',
-                                connectionType: 'Bluetooth',
-                                avatar: 'https://randomuser.me/api/portraits/lego/1.jpg',
-                            },
-                        ])
+                        setDevices(prevDevices => {
+                            const exists = prevDevices.find(d => d.id === device.id)
+                            if (exists) return prevDevices
+                            return [...prevDevices, device]
+                        })
                     }
-                })
-            }
-
-            if (connectionType === 'wifi' || connectionType === 'both') {
-                // Start WiFi scanning
-                try {
-                    const wifiList = await WifiManager.loadWifiList()
-                    wifiList.forEach(wifi => {
-                        if (wifi.SSID) {
-                            const exists = discoveredUsers.find(d => d.id === wifi.BSSID)
-                            if (exists) return
-
-                            setDiscoveredUsers(prev => [
-                                ...prev,
-                                {
-                                    id: wifi.BSSID,
-                                    name: wifi.SSID,
-                                    distance: `${wifi.level} dBm`,
-                                    connectionType: 'WiFi',
-                                    avatar: 'https://randomuser.me/api/portraits/lego/2.jpg',
-                                },
-                            ])
-                        }
-                    })
-                } catch (error) {
-                    console.error('WiFi scan error:', error)
                 }
+            )
+
+            // Clear any existing timeout
+            if (scanTimeout.current) {
+                clearTimeout(scanTimeout.current)
             }
+
+            // Set new timeout
+            scanTimeout.current = setTimeout(() => {
+                if (isMounted.current) {
+                    stopScan()
+                }
+            }, 30000)
         } catch (error) {
-            console.error('Scanning error:', error)
-        } finally {
-            setIsScanning(false)
+            console.error('Tarama başlatma hatası:', error)
+            Alert.alert(
+                'Tarama Hatası',
+                'Tarama başlatılırken bir hata oluştu. Lütfen tekrar deneyin.',
+                [
+                    {
+                        text: 'Tamam',
+                        onPress: () => {
+                            if (isMounted.current) {
+                                setIsScanning(false)
+                            }
+                        }
+                    }
+                ]
+            )
         }
     }
 
-    const sendMessage = async (userId: string, connectionType: string) => {
-        if (!message.trim()) return
+    const stopScan = () => {
+        try {
+            bleManager.stopDeviceScan()
+            setIsScanning(false)
+            if (scanTimeout.current) {
+                clearTimeout(scanTimeout.current)
+                scanTimeout.current = null
+            }
+        } catch (error) {
+            console.error('Tarama durdurma hatası:', error)
+        }
+    }
+
+    const sendMessage = async (deviceId: string) => {
+        if (!message.trim()) {
+            Alert.alert('Mesaj boş', 'Lütfen bir mesaj yaz!')
+            return
+        }
 
         try {
-            if (connectionType === 'Bluetooth') {
-                // Bluetooth mesaj gönderme işlemi
-                const device = await bleManager.connectToDevice(userId)
-                await device.discoverAllServicesAndCharacteristics()
-                // Mesaj gönderme işlemleri burada yapılacak
-            } else if (connectionType === 'WiFi') {
-                // WiFi mesaj gönderme işlemi
-                // WiFi üzerinden mesaj gönderme işlemleri burada yapılacak
-            }
+            const device = await bleManager.connectToDevice(deviceId)
+            await device.discoverAllServicesAndCharacteristics()
 
-            Alert.alert('Success', 'Message sent successfully!')
+            await device.writeCharacteristicWithResponseForService(
+                SERVICE_UUID,
+                CHARACTERISTIC_UUID,
+                Buffer.from(message, 'utf-8').toString('base64')
+            )
+
+            Alert.alert('Başarılı', 'Mesaj gönderildi!')
             setMessage('')
         } catch (error) {
-            console.error('Message sending error:', error)
-            Alert.alert('Error', 'Failed to send message')
+            console.error('Mesaj gönderme hatası:', error)
+            Alert.alert('Hata', 'Mesaj gönderilemedi!')
         }
     }
 
     return (
-        <>
+        <SafeAreaView style={styles.container}>
             <StatusBar backgroundColor={theme.colors.primary} barStyle="light-content" />
-            <SafeAreaView style={[styles.container, { backgroundColor: '#F0F2F5' }]}>
-                <View style={[styles.header, { backgroundColor: theme.colors.primary }]}>
-                    <Text style={styles.headerTitle}>Discover People</Text>
-                    <View style={styles.headerControls}>
-                        <SegmentedButtons
-                            value={connectionType}
-                            onValueChange={setConnectionType}
-                            buttons={[
-                                { value: 'wifi', label: 'WiFi' },
-                                { value: 'bluetooth', label: 'Bluetooth' },
-                                { value: 'both', label: 'Both' },
-                            ]}
-                            style={styles.segmentedButtons}
-                        />
-                        <Button
-                            mode="contained"
-                            onPress={startScanning}
-                            loading={isScanning}
-                            style={styles.scanButton}
-                            labelStyle={styles.scanButtonLabel}
-                        >
-                            {isScanning ? 'Scanning...' : 'Scan'}
+            <View style={styles.header}>
+                <Text style={styles.title}>Yakındaki Cihazlar</Text>
+                <Button
+                    mode="contained"
+                    onPress={startScan}
+                    style={styles.scanButton}
+                    disabled={isScanning}
+                >
+                    {isScanning ? 'Taranıyor...' : 'Yeniden Tara'}
+                </Button>
+            </View>
+
+            <TextInput
+                placeholder="Göndereceğin mesajı yaz..."
+                style={styles.input}
+                value={message}
+                onChangeText={setMessage}
+            />
+
+            <FlatList
+                data={devices}
+                keyExtractor={item => item.id}
+                renderItem={({ item }) => (
+                    <Surface style={styles.deviceItem}>
+                        <View style={{ flex: 1 }}>
+                            <Text style={styles.deviceName}>{item.name}</Text>
+                            <Text style={styles.deviceId}>{item.id}</Text>
+                        </View>
+                        <Button mode="contained" onPress={() => sendMessage(item.id)}>
+                            Mesaj Gönder
                         </Button>
-                    </View>
-                </View>
-
-                <View style={styles.messageInputContainer}>
-                    <TextInput
-                        style={styles.messageInput}
-                        value={message}
-                        onChangeText={setMessage}
-                        placeholder="Type a message..."
-                        multiline
-                    />
-                </View>
-
-                <FlatList
-                    data={discoveredUsers}
-                    renderItem={({ item }) => (
-                        <DiscoveredUser
-                            user={item}
-                            onSendMessage={() => sendMessage(item.id, item.connectionType)}
-                        />
-                    )}
-                    keyExtractor={item => item.id}
-                    contentContainerStyle={styles.list}
-                    showsVerticalScrollIndicator={false}
-                />
-            </SafeAreaView>
-        </>
+                    </Surface>
+                )}
+                contentContainerStyle={{ padding: 10 }}
+            />
+        </SafeAreaView>
     )
 }
 
 const styles = StyleSheet.create({
     container: {
         flex: 1,
+        backgroundColor: '#F0F2F5',
     },
     header: {
-        padding: 16,
-        elevation: 4,
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.1,
-        shadowRadius: 4,
         flexDirection: 'row',
         justifyContent: 'space-between',
         alignItems: 'center',
+        padding: 16,
+        backgroundColor: '#6200ee',
     },
-    headerTitle: {
+    title: {
         color: '#fff',
         fontSize: 20,
-        fontWeight: '600',
+        fontWeight: 'bold',
     },
     scanButton: {
         borderRadius: 20,
-        paddingHorizontal: 16,
     },
-    scanButtonLabel: {
-        color: '#fff',
-        fontSize: 14,
+    input: {
+        backgroundColor: '#fff',
+        margin: 16,
+        padding: 12,
+        borderRadius: 8,
     },
-    list: {
-        padding: 8,
-    },
-    userItem: {
+    deviceItem: {
         flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#fff',
         padding: 12,
         marginBottom: 8,
-        borderRadius: 12,
+        borderRadius: 8,
         elevation: 2,
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 1 },
-        shadowOpacity: 0.1,
-        shadowRadius: 2,
-        alignItems: 'center',
     },
-    avatar: {
-        marginRight: 12,
-    },
-    userContent: {
-        flex: 1,
-        justifyContent: 'center',
-    },
-    userHeader: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        marginBottom: 4,
-    },
-    userName: {
+    deviceName: {
         fontSize: 16,
         fontWeight: '600',
-        color: '#111B21',
+        color: '#111',
     },
-    connectionType: {
-        flexDirection: 'row',
-        alignItems: 'center',
-    },
-    connectionIcon: {
-        margin: 0,
-        padding: 0,
-    },
-    connectionText: {
+    deviceId: {
         fontSize: 12,
-        color: '#667781',
-        marginLeft: 4,
-    },
-    distance: {
-        fontSize: 14,
-        color: '#667781',
-    },
-    chatButton: {
-        marginLeft: 12,
-        borderRadius: 20,
-        paddingHorizontal: 16,
-    },
-    chatButtonLabel: {
-        color: '#fff',
-        fontSize: 14,
-    },
-    headerControls: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 8,
-    },
-    segmentedButtons: {
-        marginRight: 8,
-    },
-    messageInputContainer: {
-        padding: 16,
-        backgroundColor: '#fff',
-        borderBottomWidth: 1,
-        borderBottomColor: '#ddd',
-    },
-    messageInput: {
-        backgroundColor: '#f5f5f5',
-        borderRadius: 8,
-        padding: 12,
-        minHeight: 50,
-        maxHeight: 100,
+        color: '#555',
     },
 })
-
