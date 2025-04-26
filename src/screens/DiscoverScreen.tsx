@@ -10,6 +10,7 @@ import { PERMISSIONS, request, RESULTS, check } from 'react-native-permissions'
 import NetInfo from '@react-native-community/netinfo'
 import WifiManager from 'react-native-wifi-reborn'
 import AsyncStorage from '@react-native-async-storage/async-storage'
+import TcpSocket from 'react-native-tcp-socket'
 
 // Define service and characteristic UUIDs
 const SERVICE_UUID = '4fafc201-1fb5-459e-8fcc-c5c9c331914b'
@@ -27,6 +28,28 @@ const getBleManager = () => {
     return bleManagerInstance;
 };
 
+interface AddressInfo {
+    address: string;
+    port: number;
+    family: string;
+}
+
+interface TcpSocketServer extends TcpSocket.Server {}
+interface TcpSocketClient extends TcpSocket.Socket {}
+
+// NetworkInfo için tip tanımlaması ekle
+interface NetworkDetails {
+    ipAddress?: string;
+    subnet?: string;
+    [key: string]: any;
+}
+
+interface NetworkState {
+    type: string;
+    isConnected: boolean | null;
+    details: NetworkDetails;
+}
+
 export default function DiscoverScreen() {
     const theme = useTheme()
     const [devices, setDevices] = useState<any[]>([])
@@ -34,24 +57,28 @@ export default function DiscoverScreen() {
     const [isScanning, setIsScanning] = useState(false)
     const [deviceName, setDeviceName] = useState('')
     const [isEditingName, setIsEditingName] = useState(false)
-    const [connectionType, setConnectionType] = useState<'bluetooth' | 'wifi'>('bluetooth')
+    const [connectionType, setConnectionType] = useState<'bluetooth' | 'wifi'>('wifi')
     const bleManager = useRef(getBleManager()).current
     const scanTimeout = useRef<NodeJS.Timeout | null>(null)
     const isMounted = useRef(true)
     const [logs, setLogs] = useState<string[]>([]);
     const [showLogModal, setShowLogModal] = useState(false);
     const [scanProgress, setScanProgress] = useState(0);
+    const [server, setServer] = useState<TcpSocketServer | null>(null);
 
     useEffect(() => {
-        isMounted.current = true
-        loadDeviceName()
-        checkPermissionsAndScan()
+        isMounted.current = true;
+        loadDeviceName();
+        // İlk açılışta otomatik taramayı kaldır
+        // checkPermissionsAndScan();
+        startServer();
 
         return () => {
-            isMounted.current = false
-            cleanup()
-        }
-    }, [connectionType])
+            isMounted.current = false;
+            cleanup();
+            stopServer();
+        };
+    }, [connectionType]);
 
     const loadDeviceName = async () => {
         try {
@@ -375,129 +402,147 @@ export default function DiscoverScreen() {
             clearLogs();
             addLog('WiFi taraması başlatılıyor...');
 
-            // Önce port durumunu kontrol et
-            const isPortOpen = await checkPortStatus();
-            if (!isPortOpen) {
-                Alert.alert(
-                    'Port Hatası',
-                    'Port 8080 kapalı veya yanıt vermiyor. Lütfen uygulamayı her iki cihazda da yeniden başlatın.',
-                    [{ text: 'Tamam' }]
-                );
-                return;
-            }
+            // Sunucuyu yeniden başlat
+            await stopServer();
+            await startServer();
 
             setDevices([]);
             setIsScanning(true);
             setScanProgress(0);
 
-            // Mevcut WiFi ağını al
+            // Ağ bilgilerini al
+            const networkInfo = await NetInfo.fetch() as NetworkState;
+            
+            // WiFi SSID kontrolü
+            let currentSSID;
             try {
-                const currentSSID = await WifiManager.getCurrentWifiSSID();
-                const currentBSSID = await WifiManager.getBSSID();
-
+                currentSSID = await WifiManager.getCurrentWifiSSID();
                 addLog(`Bağlı WiFi: ${currentSSID || 'Bilinmiyor'}`);
-                addLog(`BSSID: ${currentBSSID || 'Bilinmiyor'}`);
-
-                if (!currentSSID) {
-                    addLog('HATA: WiFi ağına bağlı değil');
-                    Alert.alert(
-                        'Bağlantı Hatası',
-                        'WiFi ağına bağlı değilsiniz!',
-                        [{ text: 'Tamam' }]
-                    );
-                    return;
-                }
             } catch (error) {
-                addLog(`HATA: WiFi bilgileri alınamadı: ${error}`);
+                addLog(`UYARI: WiFi SSID alınamadı: ${error}`);
+            }
+
+            // IP adresini al
+            if (!networkInfo.details?.ipAddress) {
+                addLog('HATA: IP adresi alınamadı');
+                Alert.alert(
+                    'Bağlantı Hatası',
+                    'IP adresi alınamadı! Lütfen WiFi bağlantınızı kontrol edin.',
+                    [{ text: 'Tamam' }]
+                );
+                setIsScanning(false);
                 return;
             }
 
-            // Ağ bilgilerini al
-            try {
-                const networkInfo = await NetInfo.fetch();
-                addLog(`Ağ tipi: ${networkInfo.type}`);
-                addLog(`Bağlantı durumu: ${networkInfo.isConnected ? 'Bağlı' : 'Bağlı değil'}`);
+            const ipAddress = networkInfo.details.ipAddress;
+            const subnet = ipAddress.substring(0, ipAddress.lastIndexOf('.'));
+            addLog(`Yerel IP: ${ipAddress}`);
+            addLog(`Alt ağ: ${subnet}`);
+            
+            // Tarama başlamadan önce kısa bir bekleme
+            await new Promise(resolve => setTimeout(resolve, 2000));
 
-                if (networkInfo.type !== 'wifi' || !networkInfo.isConnected) {
-                    addLog('HATA: WiFi bağlantısı yok');
-                    Alert.alert(
-                        'Bağlantı Hatası',
-                        'WiFi bağlantısı yok!',
-                        [{ text: 'Tamam' }]
-                    );
-                    return;
-                }
+            // IP aralığını tara
+            const startIp = 1;
+            const endIp = 255;
+            const timeout = 1000; // Timeout süresini artırdık
+            let foundDevices = 0;
+            let completedScans = 0;
 
-                if (!networkInfo.details || !('ipAddress' in networkInfo.details) || !networkInfo.details.ipAddress) {
-                    addLog('HATA: IP adresi alınamadı');
-                    Alert.alert(
-                        'Bağlantı Hatası',
-                        'IP adresi alınamadı!',
-                        [{ text: 'Tamam' }]
-                    );
-                    return;
-                }
+            addLog('IP taraması başlıyor...');
 
-                const ipAddress = networkInfo.details.ipAddress;
-                const subnet = ipAddress.substring(0, ipAddress.lastIndexOf('.') + 1);
+            // Paralel tarama için IP'leri gruplara böl
+            const batchSize = 5; // Aynı anda daha az IP tara
+            for (let i = startIp; i <= endIp; i += batchSize) {
+                const endIndex = Math.min(i + batchSize - 1, endIp);
+                const promises = [];
 
-                addLog(`IP adresi: ${ipAddress}`);
-                addLog(`Alt ağ: ${subnet}`);
-
-                // Alt ağdaki tüm IP'leri tara
-                const totalIPs = 255;
-                let foundDevices = 0;
-
-                for (let i = 1; i <= totalIPs; i++) {
-                    const targetIP = `${subnet}${i}`;
-                    setScanProgress(Math.round((i / totalIPs) * 100));
-
-                    try {
-                        const controller = new AbortController();
-                        const timeoutId = setTimeout(() => controller.abort(), 500);
-
-                        const response = await fetch(`http://${targetIP}:${PORT}/ping`, {
-                            method: 'GET',
-                            signal: controller.signal
-                        });
-
-                        clearTimeout(timeoutId);
-
-                        if (response.ok) {
-                            const data = await response.json();
-                            foundDevices++;
-                            addLog(`Cihaz bulundu: ${targetIP} (${data.deviceName || 'İsimsiz'})`);
-
-                            if (data.deviceName) {
-                                setDevices(prevDevices => {
-                                    const exists = prevDevices.find(d => d.ip === targetIP);
-                                    if (exists) return prevDevices;
-                                    return [...prevDevices, {
-                                        id: targetIP,
-                                        name: data.deviceName,
-                                        ip: targetIP
-                                    }];
-                                });
-                            }
-                        }
-                    } catch (error) {
-                        // Port kapalı veya cihaz yanıt vermiyor
-                        continue;
+                for (let j = i; j <= endIndex; j++) {
+                    const targetIP = `${subnet}.${j}`;
+                    if (targetIP === ipAddress) {
+                        completedScans++;
+                        continue; // Kendi IP'mizi atlayalım
                     }
+
+                    // Her IP taraması arasında kısa bir bekleme
+                    await new Promise(resolve => setTimeout(resolve, 100));
+
+                    promises.push(
+                        new Promise<void>(async (resolve) => {
+                            try {
+                                addLog(`Taranan IP: ${targetIP}`);
+                                const controller = new AbortController();
+                                const timeoutId = setTimeout(() => controller.abort(), timeout);
+
+                                const response = await fetch(`http://${targetIP}:${PORT}/ping`, {
+                                    method: 'GET',
+                                    headers: {
+                                        'Accept': 'application/json',
+                                        'Cache-Control': 'no-cache'
+                                    },
+                                    signal: controller.signal
+                                });
+
+                                clearTimeout(timeoutId);
+
+                                if (response.ok) {
+                                    const data = await response.json();
+                                    if (data && data.deviceName) {
+                                        foundDevices++;
+                                        const deviceInfo = `\n============================\nCİHAZ BULUNDU!\nIP: ${targetIP}\nİsim: ${data.deviceName}\n============================\n`;
+                                        addLog(deviceInfo);
+
+                                        setDevices(prevDevices => {
+                                            const exists = prevDevices.find(d => d.ip === targetIP);
+                                            if (exists) return prevDevices;
+                                            return [...prevDevices, {
+                                                id: targetIP,
+                                                name: data.deviceName,
+                                                ip: targetIP
+                                            }];
+                                        });
+
+                                        // Cihaz bulunduğunda bildirim göster
+                                        Alert.alert(
+                                            'Cihaz Bulundu!',
+                                            `IP: ${targetIP}\nİsim: ${data.deviceName}`,
+                                            [{ text: 'Tamam' }]
+                                        );
+                                    } else {
+                                        addLog(`UYARI: ${targetIP} adresinden cihaz ismi alınamadı`);
+                                    }
+                                }
+                            } catch (error) {
+                                // IP yanıt vermedi
+                            } finally {
+                                completedScans++;
+                                setScanProgress(Math.round((completedScans / (endIp - startIp)) * 100));
+                                resolve();
+                            }
+                        })
+                    );
                 }
 
-                addLog(`Tarama tamamlandı. ${foundDevices} cihaz bulundu.`);
-            } catch (error) {
-                addLog(`HATA: Ağ bilgileri alınamadı: ${error}`);
+                // Her batch'i bekle
+                await Promise.all(promises);
+            }
+
+            addLog(`\n============================\nTarama tamamlandı!\nBulunan cihaz sayısı: ${foundDevices}\n============================\n`);
+            setIsScanning(false);
+            setScanProgress(0);
+
+            if (foundDevices === 0) {
                 Alert.alert(
-                    'Bağlantı Hatası',
-                    'Ağ bilgileri alınamadı!',
+                    'Bilgi',
+                    'Hiç cihaz bulunamadı. Lütfen şunları kontrol edin:\n\n' +
+                    '1. Her iki cihaz da aynı WiFi ağına bağlı olmalı\n' +
+                    '2. Her iki cihazda da uygulama çalışıyor olmalı\n' +
+                    '3. Her iki cihazın da IP adresi aynı alt ağda olmalı\n' +
+                    '4. WiFi ağının cihazlar arası iletişime izin verdiğinden emin olun',
                     [{ text: 'Tamam' }]
                 );
             }
 
-            setIsScanning(false);
-            setScanProgress(0);
         } catch (error) {
             addLog(`HATA: Beklenmeyen hata: ${error}`);
             setIsScanning(false);
@@ -540,6 +585,147 @@ export default function DiscoverScreen() {
         }
     }
 
+    const getSocketAddress = (address: string | AddressInfo | {}): string => {
+        if (typeof address === 'string') {
+            return address;
+        }
+        if (address && typeof address === 'object' && 'address' in address) {
+            return (address as AddressInfo).address;
+        }
+        return 'Bilinmeyen';
+    };
+
+    const stopServer = () => {
+        return new Promise<void>((resolve) => {
+            if (server) {
+                try {
+                    // Tüm bağlantıları kapat
+                    server.close(() => {
+                        addLog('Sunucu başarıyla durduruldu');
+                        setServer(null);
+                        resolve();
+                    });
+
+                    // 3 saniye içinde kapanmazsa zorla kapat
+                    setTimeout(() => {
+                        if (server) {
+                            setServer(null);
+                            resolve();
+                        }
+                    }, 3000);
+                } catch (error) {
+                    addLog('UYARI: Sunucu durdurulurken hata: ' + error);
+                    setServer(null);
+                    resolve();
+                }
+            } else {
+                resolve();
+            }
+        });
+    };
+
+    const startServer = async () => {
+        try {
+            addLog('Sunucu başlatılıyor...');
+            
+            // Önce mevcut sunucuyu durdur ve port'un serbest kalmasını bekle
+            await stopServer();
+            
+            // Port'un serbest kalması için kısa bir bekleme
+            await new Promise(resolve => setTimeout(resolve, 1000));
+
+            addLog('TCPSocket sunucusu oluşturuluyor...');
+
+            // Server options
+            const options = {
+                host: '0.0.0.0',
+                port: PORT
+            };
+            
+            // Basitleştirilmiş sunucu oluşturma
+            const tcpServer = TcpSocket.createServer((socket: TcpSocketClient) => {
+                addLog('Yeni bağlantı alındı');
+                
+                socket.on('data', (data: Buffer | string) => {
+                    try {
+                        const message = typeof data === 'string' ? data : data.toString();
+                        addLog('Veri alındı: ' + message);
+                        
+                        // Ping isteği kontrolü
+                        if (message.includes('GET /ping')) {
+                            const response = JSON.stringify({
+                                status: 'success',
+                                deviceName: deviceName,
+                                timestamp: new Date().toISOString()
+                            });
+
+                            const httpResponse = 
+                                'HTTP/1.1 200 OK\r\n' +
+                                'Content-Type: application/json\r\n' +
+                                'Access-Control-Allow-Origin: *\r\n' +
+                                'Content-Length: ' + response.length + '\r\n' +
+                                '\r\n' +
+                                response;
+
+                            socket.write(httpResponse);
+                            addLog('Ping yanıtı gönderildi: ' + response);
+                        }
+                    } catch (error) {
+                        addLog('HATA: Mesaj işlenirken hata: ' + error);
+                    }
+                });
+
+                socket.on('error', (error: Error) => {
+                    addLog('Socket hatası: ' + error);
+                });
+
+                socket.on('close', () => {
+                    addLog('Bağlantı kapandı');
+                });
+            });
+
+            if (!tcpServer) {
+                throw new Error('Sunucu nesnesi oluşturulamadı');
+            }
+
+            tcpServer.on('error', (error: Error) => {
+                addLog('HATA: Sunucu hatası: ' + error);
+                if ((error as any).code === 'EADDRINUSE') {
+                    addLog('Port 8080 kullanımda. Port serbest bırakılıyor...');
+                    stopServer().then(() => {
+                        setTimeout(() => {
+                            addLog('Sunucu yeniden başlatılıyor...');
+                            startServer();
+                        }, 5000);
+                    });
+                } else {
+                    setTimeout(() => {
+                        addLog('Sunucu yeniden başlatılıyor...');
+                        startServer();
+                    }, 5000);
+                }
+            });
+
+            tcpServer.on('listening', () => {
+                addLog('✅ Sunucu başarıyla başlatıldı. Port: ' + PORT);
+            });
+
+            // Sunucuyu başlat
+            tcpServer.listen(options);
+            addLog('Sunucu dinlemeye başladı');
+            
+            setServer(tcpServer);
+            addLog('Sunucu state\'e kaydedildi');
+
+        } catch (error) {
+            addLog('HATA: Sunucu başlatılamadı: ' + error);
+            setTimeout(() => {
+                addLog('Sunucu yeniden başlatılıyor...');
+                startServer();
+            }, 5000);
+        }
+    };
+
     return (
         <SafeAreaView style={styles.container}>
             <StatusBar backgroundColor={theme.colors.primary} barStyle="light-content" />
@@ -557,7 +743,7 @@ export default function DiscoverScreen() {
             </View>
 
             {/* Bağlantı Türü Seçimi */}
-            <View style={styles.connectionTypeContainer}>
+            {/* <View style={styles.connectionTypeContainer}>
                 <Text style={styles.connectionTypeTitle}>Bağlantı Türü</Text>
                 <SegmentedButtons
                     value={connectionType}
@@ -578,7 +764,7 @@ export default function DiscoverScreen() {
                     ]}
                     style={styles.segmentedButtons}
                 />
-            </View>
+            </View> */}
 
             <View style={styles.deviceNameContainer}>
                 {isEditingName ? (
