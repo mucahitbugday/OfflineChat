@@ -9,10 +9,12 @@ import { BleManager, State } from 'react-native-ble-plx'
 import { PERMISSIONS, request, RESULTS, check } from 'react-native-permissions'
 import NetInfo from '@react-native-community/netinfo'
 import WifiManager from 'react-native-wifi-reborn'
+import AsyncStorage from '@react-native-async-storage/async-storage'
 
 // Define service and characteristic UUIDs
 const SERVICE_UUID = '4fafc201-1fb5-459e-8fcc-c5c9c331914b'
 const CHARACTERISTIC_UUID = 'beb5483e-36e1-4688-b7f5-ea07361b26a8'
+const DEVICE_NAME_KEY = '@device_name'
 
 // Singleton BleManager instance
 let bleManagerInstance: BleManager | null = null;
@@ -29,19 +31,48 @@ export default function DiscoverScreen() {
     const [devices, setDevices] = useState<any[]>([])
     const [message, setMessage] = useState('')
     const [isScanning, setIsScanning] = useState(false)
+    const [deviceName, setDeviceName] = useState('')
+    const [isEditingName, setIsEditingName] = useState(false)
     const bleManager = useRef(getBleManager()).current
     const scanTimeout = useRef<NodeJS.Timeout | null>(null)
     const isMounted = useRef(true)
 
     useEffect(() => {
         isMounted.current = true
+        loadDeviceName()
         checkPermissionsAndScan()
-
+        
         return () => {
             isMounted.current = false
             cleanup()
         }
     }, [])
+
+    const loadDeviceName = async () => {
+        try {
+            const savedName = await AsyncStorage.getItem(DEVICE_NAME_KEY)
+            if (savedName) {
+                setDeviceName(savedName)
+            } else {
+                // Varsayılan cihaz ismi
+                const defaultName = `Cihaz-${Math.floor(Math.random() * 1000)}`
+                setDeviceName(defaultName)
+                await AsyncStorage.setItem(DEVICE_NAME_KEY, defaultName)
+            }
+        } catch (error) {
+            console.error('Cihaz ismi yükleme hatası:', error)
+        }
+    }
+
+    const saveDeviceName = async (name: string) => {
+        try {
+            await AsyncStorage.setItem(DEVICE_NAME_KEY, name)
+            setDeviceName(name)
+            setIsEditingName(false)
+        } catch (error) {
+            console.error('Cihaz ismi kaydetme hatası:', error)
+        }
+    }
 
     const cleanup = () => {
         try {
@@ -49,7 +80,7 @@ export default function DiscoverScreen() {
                 clearTimeout(scanTimeout.current)
                 scanTimeout.current = null
             }
-
+            
             if (isScanning) {
                 bleManager.stopDeviceScan()
                 setIsScanning(false)
@@ -248,14 +279,43 @@ export default function DiscoverScreen() {
             <StatusBar backgroundColor={theme.colors.primary} barStyle="light-content" />
             <View style={styles.header}>
                 <Text style={styles.title}>Yakındaki Cihazlar</Text>
-                <Button
-                    mode="contained"
-                    onPress={startScan}
+                <Button 
+                    mode="contained" 
+                    onPress={startScan} 
                     style={styles.scanButton}
                     disabled={isScanning}
                 >
                     {isScanning ? 'Taranıyor...' : 'Yeniden Tara'}
                 </Button>
+            </View>
+
+            <View style={styles.deviceNameContainer}>
+                {isEditingName ? (
+                    <View style={styles.deviceNameInputContainer}>
+                        <TextInput
+                            style={styles.deviceNameInput}
+                            value={deviceName}
+                            onChangeText={setDeviceName}
+                            placeholder="Cihaz ismini girin"
+                        />
+                        <Button 
+                            mode="contained" 
+                            onPress={() => saveDeviceName(deviceName)}
+                            style={styles.saveButton}
+                        >
+                            Kaydet
+                        </Button>
+                    </View>
+                ) : (
+                    <View style={styles.deviceNameDisplayContainer}>
+                        <Text style={styles.deviceNameText}>Cihaz İsmi: {deviceName}</Text>
+                        <IconButton
+                            icon="pencil"
+                            size={20}
+                            onPress={() => setIsEditingName(true)}
+                        />
+                    </View>
+                )}
             </View>
 
             <TextInput
@@ -271,7 +331,7 @@ export default function DiscoverScreen() {
                 renderItem={({ item }) => (
                     <Surface style={styles.deviceItem}>
                         <View style={{ flex: 1 }}>
-                            <Text style={styles.deviceName}>{item.name}</Text>
+                            <Text style={styles.deviceName}>{item.name || 'İsimsiz Cihaz'}</Text>
                             <Text style={styles.deviceId}>{item.id}</Text>
                         </View>
                         <Button mode="contained" onPress={() => sendMessage(item.id)}>
@@ -304,6 +364,36 @@ const styles = StyleSheet.create({
     },
     scanButton: {
         borderRadius: 20,
+    },
+    deviceNameContainer: {
+        padding: 16,
+        backgroundColor: '#fff',
+        margin: 16,
+        borderRadius: 8,
+        elevation: 2,
+    },
+    deviceNameInputContainer: {
+        flexDirection: 'row',
+        alignItems: 'center',
+    },
+    deviceNameInput: {
+        flex: 1,
+        backgroundColor: '#f5f5f5',
+        padding: 8,
+        borderRadius: 4,
+        marginRight: 8,
+    },
+    saveButton: {
+        borderRadius: 4,
+    },
+    deviceNameDisplayContainer: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+    },
+    deviceNameText: {
+        fontSize: 16,
+        fontWeight: '500',
     },
     input: {
         backgroundColor: '#fff',
