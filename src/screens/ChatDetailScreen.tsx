@@ -6,43 +6,24 @@ import { StatusBar } from 'react-native'
 import { useNavigation } from '@react-navigation/native'
 import TcpSocket from 'react-native-tcp-socket'
 import DeviceInfo from 'react-native-device-info';
+import AsyncStorage from '@react-native-async-storage/async-storage'
 
+interface Message {
+  id: string;
+  text: string;
+  time: string;
+  isMe: boolean;
+  status: 'sent' | 'delivered' | 'read';
+  deviceGuid: string;
+}
 
-interface TcpSocketServer extends TcpSocket.Server { }
-interface TcpSocketClient extends TcpSocket.Socket { }
-
-
-// Mock messages data with status
-const mockMessages = [
-  {
-    id: '1',
-    text: 'Hey, how are you?',
-    time: '10:30 AM',
-    isMe: false,
-    status: 'read',
-  },
-  {
-    id: '2',
-    text: 'I\'m good, thanks! How about you?',
-    time: '10:31 AM',
-    isMe: true,
-    status: 'read',
-  },
-  {
-    id: '3',
-    text: 'Doing well! Just working on some projects.',
-    time: '10:32 AM',
-    isMe: false,
-    status: 'read',
-  },
-  {
-    id: '4',
-    text: 'That sounds interesting! What kind of projects?',
-    time: '10:33 AM',
-    isMe: true,
-    status: 'delivered',
-  },
-]
+interface ReceivedMessage {
+  message: string;
+  sender: string;
+  deviceID: string;
+  connectionType: string;
+  deviceGuid: string;
+}
 
 const MessageStatus = ({ status }: { status: string }) => {
   const theme = useTheme()
@@ -77,7 +58,7 @@ const MessageStatus = ({ status }: { status: string }) => {
   )
 }
 
-const MessageBubble = ({ message, index }: { message: typeof mockMessages[0], index: number }) => {
+const MessageBubble = ({ message, index }: { message: Message, index: number }) => {
   const theme = useTheme()
   const scaleAnim = useRef(new Animated.Value(0)).current
 
@@ -143,87 +124,140 @@ export default function ChatDetailScreen({ navigation, route }: any) {
   const [message, setMessage] = useState('')
   const [isInputFocused, setIsInputFocused] = useState(false)
   const [isTyping, setIsTyping] = useState(false)
-  const [messages, setMessages] = useState(mockMessages)
+  const [messages, setMessages] = useState<Message[]>([])
+  const serverRef = useRef<TcpSocket.Server | null>(null)
+  const [localDeviceGuid, setLocalDeviceGuid] = useState<string>('')
 
-  // useEffect(() => {
-  //   setMessages([])
+  useEffect(() => {
+    loadDeviceGuid()
+    loadMessages()
+    startServer()
+    return () => {
+      if (serverRef.current) {
+        serverRef.current.close()
+      }
+    }
+  }, [])
 
+  const loadDeviceGuid = async () => {
+    try {
+      const guid = await DeviceInfo.getUniqueId()
+      setLocalDeviceGuid(guid)
+    } catch (error) {
+      console.error('Device GUID yüklenirken hata:', error)
+    }
+  }
 
-  // }, [])
+  const loadMessages = async () => {
+    try {
+      const storedMessages = await AsyncStorage.getItem(`messages_${deviceID}`)
+      if (storedMessages) {
+        setMessages(JSON.parse(storedMessages))
+      }
+    } catch (error) {
+      console.error('Mesajlar yüklenirken hata:', error)
+    }
+  }
 
+  const saveMessages = async (newMessages: Message[]) => {
+    try {
+      await AsyncStorage.setItem(`messages_${deviceID}`, JSON.stringify(newMessages))
+    } catch (error) {
+      console.error('Mesajlar kaydedilirken hata:', error)
+    }
+  }
 
   const startServer = async () => {
     try {
+      console.log('Sunucu başlatılıyor...', { PORT, deviceIP, connectionType });
+      
+      if (serverRef.current) {
+        console.log('Mevcut sunucu kapatılıyor...');
+        serverRef.current.close();
+        // Sunucunun tamamen kapanması için kısa bir bekleme
+        await new Promise(resolve => setTimeout(resolve, 500));
+      }
 
-
-      // Önce mevcut sunucuyu durdur ve port'un serbest kalmasını bekle
-
-      // Port'un serbest kalması için kısa bir bekleme
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      const uniqueId = await DeviceInfo.getUniqueId();
-
-
-      // Server options
-      const options = {
+      // Bağlantı tipine göre sunucu ayarları
+      const serverOptions = {
+        port: PORT,
         host: '0.0.0.0',
-        port: PORT
+        reuseAddress: true,
+        localAddress: deviceIP
       };
 
-      // Basitleştirilmiş sunucu oluşturma
-      const tcpServer = TcpSocket.createServer((socket: TcpSocketClient) => {
+      console.log('Sunucu ayarları:', serverOptions);
 
-        socket.on('data', (data: Buffer | string) => {
+      const server = TcpSocket.createServer((socket: TcpSocket.Socket) => {
+        console.log('Yeni bağlantı alındı:', socket.address());
+        
+        socket.on('data', (data: string | Buffer) => {
           try {
-            const message = typeof data === 'string' ? data : data.toString();
-            Alert.alert('Veri alındı: ' + message);
-            // Ping isteği kontrolü
-            if (message.includes('GET /ping')) {
-              const response = JSON.stringify({ status: 'success', deviceName: deviceName, uniqueId: uniqueId, timestamp: new Date().toISOString() });
-
-              const httpResponse =
-                'HTTP/1.1 200 OK\r\n' +
-                'Content-Type: application/json\r\n' +
-                'Access-Control-Allow-Origin: *\r\n' +
-                'Content-Length: ' + response.length + '\r\n' +
-                '\r\n' +
-                response;
-              socket.write(httpResponse);
-            }
+            console.log('Gelen veri:', data.toString());
+            const receivedMessage = JSON.parse(data.toString()) as ReceivedMessage;
+            handleReceivedMessage(receivedMessage);
           } catch (error) {
+            console.error('Mesaj parse hatası:', error);
+            Alert.alert('Hata', 'Gelen mesaj işlenirken bir hata oluştu.');
           }
         });
 
         socket.on('error', (error: Error) => {
-          console.log('Socket hatası: ' + error);
+          console.error('Socket hatası:', error);
+          Alert.alert('Bağlantı Hatası', `Bağlantı hatası: ${error.message}`);
         });
 
-        socket.on('close', () => {
-          console.log('Bağlantı kapandı');
+        socket.on('close', (had_error: boolean) => {
+          console.log('Bağlantı kapandı:', { had_error, address: socket.address() });
+          if (had_error) {
+            Alert.alert('Bağlantı Kesildi', 'Bağlantı beklenmedik şekilde kapandı.');
+          }
         });
       });
 
-      if (!tcpServer) {
-        throw new Error('Sunucu nesnesi oluşturulamadı');
-      }
-
-
-
-      tcpServer.on('listening', () => {
-        console.log('✅ Sunucu başarıyla başlatıldı. Port: ' + PORT);
+      server.on('error', (error: Error) => {
+        console.error('Sunucu hatası:', error);
+        Alert.alert(
+          'Sunucu Hatası',
+          `Sunucu başlatılırken bir hata oluştu: ${error}\nPort: ${PORT}\nIP: ${deviceIP}\nLütfen bağlantı ayarlarınızı kontrol edin.`
+        );
       });
 
-      // Sunucuyu başlat
-      tcpServer.listen(options);
-      console.log('Sunucu dinlemeye başladı');
+      server.on('listening', () => {
+        const address = server.address();
+        console.log('Sunucu başarıyla başlatıldı:', { address, PORT });
+      });
 
+      // Sunucuyu başlatmadan önce kısa bir bekleme
+      await new Promise(resolve => setTimeout(resolve, 500));
+      server.listen(serverOptions);
+      serverRef.current = server;
 
     } catch (error) {
-      setTimeout(() => {
-        startServer();
-      }, 5000);
+      console.error('Sunucu başlatma hatası:', error);
+      Alert.alert(
+        'Sunucu Hatası',
+        `Sunucu başlatılamadı: ${error instanceof Error ? error.message : 'Bilinmeyen hata'}\nPort: ${PORT}\nIP: ${deviceIP}\nLütfen uygulamayı yeniden başlatın.`
+      );
     }
   };
 
+  const handleReceivedMessage = (receivedMessage: ReceivedMessage) => {
+    const newMessage: Message = {
+      id: Date.now().toString(),
+      text: receivedMessage.message,
+      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      isMe: false,
+      status: 'read',
+      deviceGuid: receivedMessage.deviceGuid
+    }
+
+    setMessages(prevMessages => {
+      const updatedMessages = [...prevMessages, newMessage]
+      saveMessages(updatedMessages)
+      return updatedMessages
+    })
+  }
 
   const sendWifiMessage = async (deviceIP: string) => {
     if (!message.trim()) {
@@ -232,50 +266,60 @@ export default function ChatDetailScreen({ navigation, route }: any) {
     }
 
     try {
-      console.log('Sending message to device:', deviceIP, message, PORT)
-      const response = await fetch(`http://${deviceIP}:${PORT}/message`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', },
-        body: JSON.stringify({
+      const client = TcpSocket.createConnection({
+        port: PORT,
+        host: deviceIP
+      }, () => {
+        const messageData = JSON.stringify({
           message,
           sender: deviceName,
           deviceID: deviceID,
           connectionType: connectionType,
+          deviceGuid: localDeviceGuid
         })
+        client.write(messageData)
+        client.destroy()
       })
 
-      if (response.ok) {
-        Alert.alert('Başarılı', 'Mesaj gönderildi!')
-        setMessage('')
-      } else {
-        throw new Error('Mesaj gönderilemedi')
-      }
+      client.on('error', (error: Error) => {
+        console.error('Mesaj gönderme hatası:', error)
+        Alert.alert('Hata', 'Mesaj gönderilemedi!')
+      })
+
+      client.on('close', (had_error: boolean) => {
+        console.log('Bağlantı kapandı:', had_error)
+      })
     } catch (error) {
       console.error('WiFi mesaj gönderme hatası:', error)
       Alert.alert('Hata', 'Mesaj gönderilemedi!')
     }
   }
 
-
   const sendMessage = () => {
     if (!message.trim()) {
       Alert.alert('Mesaj boş', 'Lütfen bir mesaj yaz!')
       return
     }
-    console.log('Sending setMessages:', setMessages)
 
-    setMessages(msg => [...msg, {
+    const newMessage: Message = {
       id: Date.now().toString(),
       text: message,
       time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       isMe: true,
-      status: 'sent'
-    }])
+      status: 'sent',
+      deviceGuid: localDeviceGuid
+    }
+
+    setMessages(prevMessages => {
+      const updatedMessages = [...prevMessages, newMessage]
+      saveMessages(updatedMessages)
+      return updatedMessages
+    })
+
     sendWifiMessage(deviceIP)
     setMessage('')
     setIsTyping(false)
   }
-
 
   return (
     <>
@@ -298,7 +342,7 @@ export default function ChatDetailScreen({ navigation, route }: any) {
                 source={{ uri: 'https://randomuser.me/api/portraits/men/1.jpg' }}
               />
               <View style={styles.headerText}>
-                <Text style={styles.headerTitle}>{deviceName || ''} - {deviceIP}</Text>
+                <Text style={styles.headerTitle}>{deviceName || ''}  {deviceIP}</Text>
                 <Text style={styles.headerSubtitle}>
                   {isTyping ? 'typing...' : 'Online'}
                 </Text>

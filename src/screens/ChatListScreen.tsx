@@ -1,35 +1,31 @@
 import { StyleSheet, View, FlatList, TouchableOpacity } from 'react-native'
-import React from 'react'
+import React, { useEffect, useState } from 'react'
 import { Text, useTheme, Avatar, Surface, IconButton } from 'react-native-paper'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { StatusBar } from 'react-native'
-// Mock data for chat list
-const mockChats = [
-  {
-    id: '1',
-    name: 'John Doe',
-    lastMessage: 'Hey, how are you doing?',
-    time: '10:30 AM',
-    unreadCount: 2,
-    avatar: 'https://randomuser.me/api/portraits/men/1.jpg',
-  }
-]
+import { chatService } from '../services/ChatService'
+import { Chat } from '../models/Chat'
 
-const ChatItem = ({ chat, navigation }: { chat: typeof mockChats[0], navigation: any }) => {
+const ChatItem = ({ chat, navigation }: { chat: Chat, navigation: any }) => {
   const theme = useTheme()
+
+  const formatTime = (timestamp: string) => {
+    const date = new Date(timestamp)
+    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  }
 
   return (
     <TouchableOpacity onPress={() => navigation.navigate('ChatDetailScreen', { chatId: chat.id })} activeOpacity={0.7}>
       <Surface style={styles.chatItem}>
-        <Avatar.Image size={50} source={{ uri: chat.avatar }} style={styles.avatar} />
+        <Avatar.Text size={50} label={chat.deviceName.charAt(0)} style={styles.avatar} />
         <View style={styles.chatContent}>
           <View style={styles.chatHeader}>
-            <Text style={styles.chatName}>{chat.name}</Text>
-            <Text style={styles.chatTime}>{chat.time}</Text>
+            <Text style={styles.chatName}>{chat.deviceName}</Text>
+            <Text style={styles.chatTime}>{formatTime(chat.updatedAt)}</Text>
           </View>
           <View style={styles.chatFooter}>
             <Text style={[styles.lastMessage, chat.unreadCount > 0 && styles.unreadMessage]} numberOfLines={1} >
-              {chat.lastMessage}
+              {chat.lastMessage?.content || 'No messages yet'}
             </Text>
             {chat.unreadCount > 0 && (
               <View style={[styles.unreadBadge, { backgroundColor: theme.colors.primary }]}>
@@ -45,6 +41,15 @@ const ChatItem = ({ chat, navigation }: { chat: typeof mockChats[0], navigation:
 
 export default function ChatListScreen({ navigation }: { navigation: any }) {
   const theme = useTheme()
+  const [chats, setChats] = useState<Chat[]>([])
+
+  useEffect(() => {
+    const loadChats = async () => {
+      const loadedChats = await chatService.getChats()
+      setChats(loadedChats)
+    }
+    loadChats()
+  }, [])
 
   return (
     <>
@@ -53,13 +58,13 @@ export default function ChatListScreen({ navigation }: { navigation: any }) {
         <View style={[styles.header, { backgroundColor: theme.colors.primary }]}>
           <Text style={styles.headerTitle}>Chats</Text>
           <View style={{ flexDirection: 'row' }}>
-            <IconButton icon="delete-outline" iconColor="#fff" size={24} onPress={() => navigation.navigate('DiscoverScreen')} />
+            {/* <IconButton icon="delete-outline" iconColor="#fff" size={24} onPress={() => navigation.navigate('DiscoverScreen')} /> */}
             <IconButton icon="account-search" iconColor="#fff" size={24} onPress={() => navigation.navigate('ScanningScreen')} />
           </View>
         </View>
 
         <FlatList
-          data={mockChats}
+          data={chats}
           renderItem={({ item }) => <ChatItem chat={item} navigation={navigation} />}
           keyExtractor={item => item.id}
           contentContainerStyle={styles.list}

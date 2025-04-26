@@ -13,6 +13,7 @@ import DeviceInfo from 'react-native-device-info';
 // Define service and characteristic UUIDs
 const SERVICE_UUID = '4fafc201-1fb5-459e-8fcc-c5c9c331914b'
 const CHARACTERISTIC_UUID = 'beb5483e-36e1-4688-b7f5-ea07361b26a8'
+const WIFI_SERVICE_ID = 'offline-chat-wifi-service' // WiFi bağlantıları için tanımlayıcı
 const PORT = 8080 // WiFi mesajlaşma için port numarası
 
 
@@ -159,51 +160,58 @@ export default function ScanningScreen({ navigation }: any) {
         try {
             addLog('Sunucu başlatılıyor...');
 
-            const uniqueId = await DeviceInfo.getUniqueId();
-
-            // Önce mevcut sunucuyu durdur ve port'un serbest kalmasını bekle
+            // Önce mevcut sunucuyu durdur
             await stopServer();
 
-            // Port'un serbest kalması için kısa bir bekleme
+            // Port'un serbest kalması için bekle
             await new Promise(resolve => setTimeout(resolve, 1000));
 
-            addLog('TCPSocket sunucusu oluşturuluyor...');
+            const uniqueId = await DeviceInfo.getUniqueId();
+            addLog(`Cihaz ID: ${uniqueId}`);
 
-            // Server options
             const options = {
                 host: '0.0.0.0',
-                port: PORT
+                port: PORT,
+                reuseAddress: true
             };
 
-            // Basitleştirilmiş sunucu oluşturma
+            addLog(`Sunucu ayarları: ${JSON.stringify(options)}`);
+
             const tcpServer = TcpSocket.createServer((socket: TcpSocketClient) => {
                 addLog('Yeni bağlantı alındı');
 
                 socket.on('data', (data: Buffer | string) => {
                     try {
                         const message = typeof data === 'string' ? data : data.toString();
-                        addLog('Veri alındı: ' + message);
-                        // Ping isteği kontrolü
-                        if (message.includes('GET /ping')) {
-                            const response = JSON.stringify({ status: 'success', deviceName: deviceName, uniqueId: uniqueId, timestamp: new Date().toISOString() });
+                        addLog(`Gelen veri: ${message}`);
 
-                            const httpResponse =
+                        if (message.includes('GET /ping')) {
+                            const response = JSON.stringify({ 
+                                status: 'success', 
+                                deviceName: deviceName, 
+                                uniqueId: uniqueId, 
+                                serviceId: WIFI_SERVICE_ID, // WiFi servis tanımlayıcısını ekle
+                                timestamp: new Date().toISOString() 
+                            });
+
+                            const httpResponse = 
                                 'HTTP/1.1 200 OK\r\n' +
                                 'Content-Type: application/json\r\n' +
                                 'Access-Control-Allow-Origin: *\r\n' +
                                 'Content-Length: ' + response.length + '\r\n' +
                                 '\r\n' +
                                 response;
+
                             socket.write(httpResponse);
-                            addLog('Ping yanıtı gönderildi: ' + response);
+                            addLog('Ping yanıtı gönderildi');
                         }
                     } catch (error) {
-                        addLog('HATA: Mesaj işlenirken hata: ' + error);
+                        addLog(`HATA: Mesaj işleme hatası: ${error}`);
                     }
                 });
 
                 socket.on('error', (error: Error) => {
-                    addLog('Socket hatası: ' + error);
+                    addLog(`Socket hatası: ${error.message}`);
                 });
 
                 socket.on('close', () => {
@@ -211,67 +219,46 @@ export default function ScanningScreen({ navigation }: any) {
                 });
             });
 
-            if (!tcpServer) {
-                throw new Error('Sunucu nesnesi oluşturulamadı');
-            }
-
             tcpServer.on('error', (error: Error) => {
-                addLog('HATA: Sunucu hatası: ' + error);
+                addLog(`HATA: Sunucu hatası: ${error.message}`);
                 if ((error as any).code === 'EADDRINUSE') {
-                    addLog('Port 8080 kullanımda. Port serbest bırakılıyor...');
-                    stopServer().then(() => {
-                        setTimeout(() => {
-                            addLog('Sunucu yeniden başlatılıyor...');
-                            startServer();
-                        }, 5000);
-                    });
-                } else {
-                    setTimeout(() => {
-                        addLog('Sunucu yeniden başlatılıyor...');
-                        startServer();
-                    }, 5000);
+                    addLog('Port kullanımda, yeniden başlatılıyor...');
+                    setTimeout(() => startServer(), 2000);
                 }
             });
 
             tcpServer.on('listening', () => {
-                addLog('✅ Sunucu başarıyla başlatıldı. Port: ' + PORT);
+                addLog(`✅ Sunucu başarıyla başlatıldı. Port: ${PORT}`);
             });
 
-            // Sunucuyu başlat
             tcpServer.listen(options);
-            addLog('Sunucu dinlemeye başladı');
-
             setServer(tcpServer);
-            addLog('Sunucu state\'e kaydedildi');
 
         } catch (error) {
-            addLog('HATA: Sunucu başlatılamadı: ' + error);
-            setTimeout(() => {
-                addLog('Sunucu yeniden başlatılıyor...');
-                startServer();
-            }, 5000);
+            addLog(`HATA: Sunucu başlatma hatası: ${error}`);
+            setTimeout(() => startServer(), 2000);
         }
     };
-    const stopServer = () => {
+
+    const stopServer = async () => {
         return new Promise<void>((resolve) => {
             if (server) {
                 try {
-                    // Tüm bağlantıları kapat
                     server.close(() => {
                         addLog('Sunucu başarıyla durduruldu');
                         setServer(null);
                         resolve();
                     });
 
-                    // 3 saniye içinde kapanmazsa zorla kapat
+                    // 2 saniye içinde kapanmazsa zorla kapat
                     setTimeout(() => {
                         if (server) {
                             setServer(null);
                             resolve();
                         }
-                    }, 3000);
+                    }, 2000);
                 } catch (error) {
-                    addLog('UYARI: Sunucu durdurulurken hata: ' + error);
+                    addLog(`UYARI: Sunucu durdurma hatası: ${error}`);
                     setServer(null);
                     resolve();
                 }
@@ -280,6 +267,7 @@ export default function ScanningScreen({ navigation }: any) {
             }
         });
     };
+
     const cleanup = () => {
         try {
             if (scanTimeout.current) {
@@ -308,7 +296,6 @@ export default function ScanningScreen({ navigation }: any) {
             setDevices([])
             setIsScanning(true)
 
-
             stopWifiScan()
             clearLogs()
             addLog('Bluetooth taraması başlatılıyor...')
@@ -317,69 +304,57 @@ export default function ScanningScreen({ navigation }: any) {
                 [SERVICE_UUID],
                 {
                     allowDuplicates: false,
-                    scanMode: 2, // SCAN_MODE_BALANCED
+                    scanMode: 1, // SCAN_MODE_LOW_LATENCY
                     callbackType: 1, // CALLBACK_TYPE_ALL_MATCHES
                 },
-                (error, device) => {
+                async (error, device) => {
                     if (!isMounted.current) return
 
                     if (error) {
                         console.error('Tarama hatası:', error)
-                        Alert.alert(
-                            'Tarama Hatası',
-                            'Cihazlar taranırken bir hata oluştu. Lütfen tekrar deneyin.',
-                            [
-                                {
-                                    text: 'Tamam',
-                                    onPress: () => {
-                                        if (isMounted.current) {
-                                            setIsScanning(false)
-                                        }
-                                    }
-                                }
-                            ]
-                        )
+                        addLog(`Tarama hatası: ${error}`)
                         return
                     }
 
                     if (device) {
-                        device.discoverAllServicesAndCharacteristics()
-                            .then(async () => {
-                                const services = await device.services()
-                                if (services && services.length > 0) {
-                                    const hasOurService = services.some(
-                                        (service: { uuid: string }) =>
-                                            service.uuid.toLowerCase() === SERVICE_UUID.toLowerCase()
-                                    )
-                                    if (hasOurService) {
-                                        setDevices(prevDevices => {
-                                            const exists = prevDevices.find(d => d.id === device.id)
-                                            if (exists) return prevDevices
-                                            return [...prevDevices, device]
-                                        })
-                                    }
+                        try {
+                            await device.discoverAllServicesAndCharacteristics()
+                            const services = await device.services()
+                            if (services && services.length > 0) {
+                                const hasOurService = services.some(
+                                    (service: { uuid: string }) =>
+                                        service.uuid.toLowerCase() === SERVICE_UUID.toLowerCase()
+                                )
+                                if (hasOurService) {
+                                    setDevices(prevDevices => {
+                                        const exists = prevDevices.find(d => d.id === device.id)
+                                        if (exists) return prevDevices
+                                        return [...prevDevices, device]
+                                    })
                                 }
-                            })
-                            .catch(error => {
-                                console.error('Servis keşif hatası:', error)
-                            })
+                            }
+                        } catch (error) {
+                            console.error('Cihaz işleme hatası:', error)
+                            addLog(`Cihaz işleme hatası: ${error}`)
+                        }
                     }
                 }
             )
 
-            // Clear any existing timeout
             if (scanTimeout.current) {
                 clearTimeout(scanTimeout.current)
             }
 
-            // Set new timeout
             scanTimeout.current = setTimeout(() => {
                 if (isMounted.current) {
                     stopBluetoothScan()
+                    addLog('Bluetooth taraması tamamlandı')
                 }
-            }, 30000)
+            }, 60000)
+
         } catch (error) {
             console.error('Tarama başlatma hatası:', error)
+            addLog(`Tarama başlatma hatası: ${error}`)
             Alert.alert(
                 'Tarama Hatası',
                 'Tarama başlatılırken bir hata oluştu. Lütfen tekrar deneyin.',
@@ -417,9 +392,7 @@ export default function ScanningScreen({ navigation }: any) {
         try {
             clearLogs();
             addLog('WiFi taraması başlatılıyor...');
-            console.log('WiFi taraması başlatılıyor...');
 
-            // Sunucuyu yeniden başlat
             await stopServer();
             await startServer();
 
@@ -427,19 +400,8 @@ export default function ScanningScreen({ navigation }: any) {
             setIsScanning(true);
             setScanProgress(0);
 
-            // Ağ bilgilerini al
             const networkInfo = await NetInfo.fetch() as NetworkState;
 
-            // WiFi SSID kontrolü
-            let currentSSID;
-            try {
-                currentSSID = await WifiManager.getCurrentWifiSSID();
-                addLog(`Bağlı WiFi: ${currentSSID || 'Bilinmiyor'}`);
-            } catch (error) {
-                addLog(`UYARI: WiFi SSID alınamadı: ${error}`);
-            }
-
-            // IP adresini al
             if (!networkInfo.details?.ipAddress) {
                 addLog('HATA: IP adresi alınamadı');
                 Alert.alert(
@@ -456,22 +418,19 @@ export default function ScanningScreen({ navigation }: any) {
             addLog(`Yerel IP: ${ipAddress}`);
             addLog(`Alt ağ: ${subnet}`);
 
-            // Tarama başlamadan önce kısa bir bekleme
             await new Promise(resolve => setTimeout(resolve, 2000));
 
-            // IP aralığını tara
             const startIp = 0;
             const endIp = 255;
-            const timeout = 1000; // Timeout süresini artırdık
+            const timeout = 2000;
             let foundDevices = 0;
             let completedScans = 0;
 
             addLog('IP taraması başlıyor...');
 
-            if (!setIsScanning) return; // Eğer bileşen montelenmemişse taramayı durdur
+            if (!setIsScanning) return;
 
-            // Paralel tarama için IP'leri gruplara böl
-            const batchSize = 10; // Aynı anda daha az IP tara
+            const batchSize = 5;
             for (let i = startIp; i <= endIp; i += batchSize) {
                 const endIndex = Math.min(i + batchSize - 1, endIp);
                 const promises = [];
@@ -480,11 +439,10 @@ export default function ScanningScreen({ navigation }: any) {
                     const targetIP = `${subnet}.${j}`;
                     if (targetIP === ipAddress) {
                         completedScans++;
-                        continue; // Kendi IP'mizi atlayalım
+                        continue;
                     }
 
-                    // Her IP taraması arasında kısa bir bekleme
-                    await new Promise(resolve => setTimeout(resolve, 100));
+                    await new Promise(resolve => setTimeout(resolve, 50));
 
                     promises.push(
                         new Promise<void>(async (resolve) => {
@@ -506,9 +464,8 @@ export default function ScanningScreen({ navigation }: any) {
 
                                 if (response.ok) {
                                     const data = await response.json();
-                                    addLog(`Cihaz data: ${data}`);
-                                    console.log('Cihaz data:', data);
-                                    if (data && data.deviceName) {
+                                    // Sadece aynı servis ID'sine sahip cihazları listele
+                                    if (data && data.deviceName && data.serviceId === WIFI_SERVICE_ID) {
                                         foundDevices++;
                                         const deviceInfo = `\n============================\nCİHAZ BULUNDU!\nIP: ${targetIP}\nİsim: ${data.deviceName}\n============================\n`;
                                         addLog(deviceInfo);
@@ -522,11 +479,6 @@ export default function ScanningScreen({ navigation }: any) {
                                                 ip: targetIP
                                             }];
                                         });
-                                        Alert.alert('Cihaz Bulundu!', `IP: ${targetIP}\nİsim: ${data.deviceName}`, [{ text: 'Tamam' }]);
-                                        stopWifiScan();
-
-                                    } else {
-                                        addLog(`UYARI: ${targetIP} adresinden cihaz ismi alınamadı`);
                                     }
                                 }
                             } catch (error) {
@@ -540,7 +492,6 @@ export default function ScanningScreen({ navigation }: any) {
                     );
                 }
 
-                // Her batch'i bekle
                 await Promise.all(promises);
             }
 
@@ -553,19 +504,15 @@ export default function ScanningScreen({ navigation }: any) {
                     'Bilgi',
                     'Hiç cihaz bulunamadı. Lütfen şunları kontrol edin:\n\n' +
                     '1. Her iki cihaz da aynı WiFi ağına bağlı olmalı\n' +
-                    '2. Her iki cihazda da uygulama çalışıyor olmalı\n' +
-                    '3. Her iki cihazın da IP adresi aynı alt ağda olmalı\n' +
-                    '4. WiFi ağının cihazlar arası iletişime izin verdiğinden emin olun',
+                    '2. Her iki cihazda da uygulama çalışıyor olmalı',
                     [{ text: 'Tamam' }]
                 );
             }
-            stopWifiScan();
 
         } catch (error) {
             addLog(`HATA: Beklenmeyen hata: ${error}`);
             setIsScanning(false);
             setScanProgress(0);
-            stopWifiScan();
             Alert.alert(
                 'Tarama Hatası',
                 'WiFi cihazları taranırken bir hata oluştu!',
@@ -582,16 +529,24 @@ export default function ScanningScreen({ navigation }: any) {
     }
 
     //#endregion
-
-
-
-
-
-
-
-
-    const sendMessage = (device: any) => {
-        navigation.navigate('ChatDetailScreen', { PORT: PORT, deviceID: device.id, deviceName: device.name, deviceIP: device.ip, connectionType: connectionType })
+ 
+    const sendMessage = async (device: any) => {
+        try {
+            addLog('Mesaj gönderme işlemi başlatılıyor...');
+            await stopServer();
+            addLog('Sunucu durduruldu, ChatDetailScreen\'e geçiliyor...');
+            
+            navigation.navigate('ChatDetailScreen', { 
+                PORT: PORT, 
+                deviceID: device.id, 
+                deviceName: device.name, 
+                deviceIP: device.ip, 
+                connectionType: connectionType 
+            });
+        } catch (error) {
+            addLog(`HATA: Mesaj gönderme hatası: ${error}`);
+            Alert.alert('Hata', 'Mesaj gönderme işlemi başlatılamadı. Lütfen tekrar deneyin.');
+        }
     }
 
     useEffect(() => {
